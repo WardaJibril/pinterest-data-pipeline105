@@ -12,13 +12,6 @@ random.seed(100)
 
 API_URL = "https://9nf1524018.execute-api.us-east-1.amazonaws.com/v1/topics"
 
-S3_BUCKET = 'user-1215923e991d-bucket' 
-S3_PATH = ''  
-
-
-# Initialize S3 client
-s3_client = boto3.client('s3', region_name='us-east-1')
-
 class AWSDBConnector:
 
     def __init__(self):
@@ -60,18 +53,6 @@ def send_to_kafka(topics, data):
     else:
         print(f"Failed to send data to {topics}, Status code: {response.status_code}")
 
-def send_to_s3(data, file_name):
-  
-    try:
-        # Upload the data to S3
-        s3_client.put_object(
-            Bucket=S3_BUCKET,
-            Key=S3_PATH + file_name,
-            Body=json.dumps(data)  # Convert data to JSON and upload
-        )
-        print(f"Successfully uploaded to S3: {S3_PATH + file_name}")
-    except Exception as e:
-        print(f"Failed to upload to S3: {str(e)}")
 
 def run_infinite_post_data_loop():
     record_count = 0
@@ -104,11 +85,6 @@ def run_infinite_post_data_loop():
             send_to_kafka("1215923e991d.pin", pin_result)  # Send to the 'pin' topic
             send_to_kafka("1215923e991d.geo", geo_result)  # Send to the 'geo' topic
             send_to_kafka("1215923e991d.user", user_result)  # Send to the 'user' topic
-            
-            send_to_s3(pin_result, f"pin_record_{record_count}.json")  # Upload pin data to S3
-            send_to_s3(geo_result, f"geo_record_{record_count}.json")  # Upload geo data to S3
-            send_to_s3(user_result, f"user_record_{record_count}.json")  # Upload user data to S3
-            record_count += 1
 
         sleep(random.uniform(0.5, 1.5))  # Sleep to simulate delay
 
