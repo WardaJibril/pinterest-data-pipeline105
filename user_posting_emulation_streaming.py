@@ -6,20 +6,21 @@ import sqlalchemy
 import yaml
 from sqlalchemy import text
 from datetime import datetime
+import time
 
 random.seed(100)
 
 API_URL = "https://9nf1524018.execute-api.us-east-1.amazonaws.com/v1/topics"
 
-# Load database credentials from db_creds.yaml
+# Load database credentials from dbs_creds.yaml
 def load_db_creds():
     with open("dbs_creds.yaml", "r") as file:
         creds = yaml.safe_load(file)
-    print("Loaded database credentials...")  # Debugging print
     return creds
 
 class AWSDBConnector:
-    def __init__(self, creds):
+    def __init__(self):
+        creds = load_db_creds()
         self.HOST = creds['RDS_HOST']
         self.USER = creds['RDS_USER']
         self.PASSWORD = creds['RDS_PASSWORD']
@@ -30,42 +31,48 @@ class AWSDBConnector:
         engine = sqlalchemy.create_engine(f"mysql+pymysql://{self.USER}:{self.PASSWORD}@{self.HOST}:{self.PORT}/{self.DATABASE}?charset=utf8mb4")
         return engine
 
+new_connector = AWSDBConnector()
 
 def convert_datetime(obj):
     if isinstance(obj, datetime):
         return obj.isoformat()  # Convert to ISO 8601 format string
     raise TypeError("Type not serializable")
 
+def send_to_kinesis(topic, data, partition_key):
+    topic_url = f"{API_URL}/{topic}"
 
-def send_to_kinesis(topics, data, partition_key):
-    topic_url = f"{API_URL}/{topics}"
+    # Filter out unnecessary fields to reduce the payload size
+    filtered_data = {k: v for k, v in data.items() if k in ["unique_id", "title", "category", "timestamp"]}  
+
     payload = {
-        "records": [{"value": json.dumps(data, default=convert_datetime), "partitionKey": partition_key}]
+        "records": [{"value": json.dumps(filtered_data, default=convert_datetime), "partitionKey": partition_key}]
     }
 
     headers = {"Content-Type": "application/vnd.kafka.json.v2+json"}
 
-    response = requests.post(topic_url, headers=headers, data=json.dumps(payload))
+    max_retries = 3  # Retry up to 3 times in case of failure
+    for attempt in range(max_retries):
+        response = requests.post(topic_url, headers=headers, data=json.dumps(payload))
 
-    if response.status_code == 200:
-        print(f"Successfully sent data to {topics}")
-    else:
-        print(f"Failed to send data to {topics}, Status code: {response.status_code}")
+        if response.status_code == 200:
+            print(f"Successfully sent data to {topic}")
+            return  # Exit if successful
+        else:
+            print(f"Failed to send data to {topic}, Status code: {response.status_code}. Attempt {attempt + 1} of {max_retries}")
+            time.sleep(2)  # Wait before retrying
 
+    print(f"Final attempt failed. Skipping data for {topic}.")
 
 def run_infinite_post_data_loop():
     record_count = 0
-    creds = load_db_creds()  # Load DB credentials
-    db_connector = AWSDBConnector(creds)
+    while record_count < 500:  
 
-    while record_count < 500:  # Send approximately 500 records
-        sleep(random.randrange(0, 2))
+        sleep(random.uniform(1.5, 3.0))  # Slower requests to avoid overloading the API
         random_row = random.randint(0, 11000)
-        engine = db_connector.create_db_connector()
+        engine = new_connector.create_db_connector()
 
         with engine.connect() as connection:
 
-            # Select data from Pinterest tables
             pin_string = text(f"SELECT * FROM pinterest_data LIMIT {random_row}, 1")
             pin_selected_row = connection.execute(pin_string)
             for row in pin_selected_row:
@@ -81,14 +88,13 @@ def run_infinite_post_data_loop():
             for row in user_selected_row:
                 user_result = dict(row._mapping)
 
-            # Send data to Kinesis with appropriate PartitionKey
-            send_to_kinesis("Kinesis-Prod-Stream", pin_result, "pinterest_data")
-            send_to_kinesis("Kinesis-Prod-Stream", geo_result, "geolocation_data")
-            send_to_kinesis("Kinesis-Prod-Stream", user_result, "user_data")
+            send_to_kinesis("1215923e991d.pin", pin_result, "pinterest_data")
+            send_to_kinesis("1215923e991d.geo", geo_result, "geolocation_data")
+            send_to_kinesis("1215923e991d.user", user_result, "user_data")
 
-        sleep(random.uniform(0.5, 1.5))  # Sleep to simulate delay
-
+        record_count += 3  # Increase record count by 3 for each loop (one from each table)
 
 if __name__ == "__main__":
     run_infinite_post_data_loop()
     print('Working')
+
